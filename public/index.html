@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chzzk VOD Downloader</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <h1>Chzzk VOD Downloader</h1>
+
+      <!-- 쿠키 입력 (성인 콘텐츠용) -->
+      <details id="cookieDetails" class="cookie-details">
+        <summary>로그인 쿠키 입력 (성인 콘텐츠용) <span id="cookieSavedBadge" class="cookie-saved-badge hidden">저장됨</span></summary>
+        <div class="cookie-fields">
+          <div class="cookie-field">
+            <label>NID_AUT</label>
+            <input type="text" id="cookieNidAut" placeholder="값 붙여넣기" />
+          </div>
+          <div class="cookie-field">
+            <label>NID_SES</label>
+            <input type="text" id="cookieNidSes" placeholder="값 붙여넣기" />
+          </div>
+          <p class="cookie-hint">
+            치지직 로그인 후 개발자도구 → Application → Cookies → chzzk.naver.com
+            에서 복사
+          </p>
+        </div>
+      </details>
+
+      <!-- URL 입력 -->
+      <div class="input-group">
+        <input
+          type="text"
+          id="urlInput"
+          placeholder="치지직 VOD URL 붙여넣기 (예: https://chzzk.naver.com/video/xxxxx)"
+        />
+        <button id="btnInfo">정보 조회</button>
+      </div>
+
+      <!-- 에러 메시지 -->
+      <div id="errorMsg" class="error hidden"></div>
+
+      <!-- 영상 정보 카드 -->
+      <div id="infoCard" class="info-card hidden">
+        <img id="thumbnail" src="" alt="thumbnail" />
+        <div class="info-text">
+          <div class="info-title" id="videoTitle"></div>
+          <div class="info-channel" id="channelName"></div>
+          <div class="info-duration" id="videoDuration"></div>
+        </div>
+      </div>
+
+      <!-- 화질 선택 + 다운로드 -->
+      <div id="qualitySection" class="quality-section hidden">
+        <label>화질 선택</label>
+        <select id="qualitySelect"></select>
+        <label class="audio-only-label">
+          <input type="checkbox" id="checkAudioOnly" />
+          오디오만
+        </label>
+        <button id="btnDownload">다운로드 시작</button>
+      </div>
+
+      <!-- 진행률 바 -->
+      <div id="progressSection" class="progress-section hidden">
+        <div class="progress-label">
+          <span id="progressText">다운로드 중...</span>
+          <span id="progressPercent">0%</span>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+      <!-- 완료 메시지 -->
+      <div id="doneMsg" class="done hidden"></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
