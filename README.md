@@ -6,6 +6,25 @@
 
 ## 실행
 
+### 데스크톱 앱 (권장)
+
+```bash
+npm install
+npm run dist
+# → release/mac-arm64/Chzzk Downloader.app 생성
+```
+
+생성된 `.app`을 `/Applications`로 옮기면 더블클릭으로 바로 실행됩니다 (서버 별도 실행 불필요).
+앱으로 실행하면 다운로드 파일은 `~/Downloads/chzzk/`에 저장됩니다.
+
+개발 중에는 빌드 없이 바로 띄울 수 있습니다:
+
+```bash
+npm run app   # Electron 창으로 실행
+```
+
+### 웹 서버 모드
+
 ```bash
 npm install
 npm start
@@ -18,6 +37,8 @@ npm start
 
 ```
 chzzk/
+├── electron/
+│   └── main.js             # Electron 메인 프로세스 (서버 시작 + 창 생성)
 ├── public/                 # 프론트엔드 (정적 파일)
 │   ├── index.html          # UI 레이아웃
 │   ├── style.css           # 스타일
@@ -83,7 +104,9 @@ chzzk/
 
 **SSE 진행률 구조:**
 
-다운로드를 시작하면 즉시 `downloadId`를 반환하고, 백그라운드에서 실제 다운로드가 진행됩니다. 프론트엔드는 해당 `downloadId`로 SSE 엔드포인트에 연결하여 진행률을 실시간으로 받습니다.
+다운로드를 시작하면 즉시 `downloadId`를 반환하고, 백그라운드에서 실제 다운로드가 진행됩니다. 프론트엔드는 해당 `downloadId`로 SSE 엔드포인트에 연결하여 진행률을 실시간으로 받습니다. 이벤트는 서버 메모리에 항상 저장되므로 SSE 연결이 늦어도 최신 상태를 받습니다.
+
+**멀티다운로드:** 여러 다운로드를 동시에 요청할 수 있으며, 각 다운로드는 독립된 `downloadId`/SSE 채널을 가집니다. 동시 실행은 2개로 제한되고 나머지는 대기열에서 순서대로 실행됩니다 (`MAX_CONCURRENT_DOWNLOADS`).
 
 ```
 POST /api/download  →  { downloadId: "abc-123" }  (즉시 반환)

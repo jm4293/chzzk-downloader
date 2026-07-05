@@ -2,9 +2,11 @@
   "name": "chzzk",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "electron/main.js",
   "scripts": {
     "start": "node src/server.js",
+    "app": "electron .",
+    "dist": "electron-builder --mac",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -15,5 +17,29 @@
     "express": "^4.22.1",
     "ffmpeg-static": "^5.3.0",
     "uuid": "^13.0.0"
+  },
+  "build": {
+    "appId": "com.jm4293.chzzk-downloader",
+    "productName": "Chzzk Downloader",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**",
+      "src/**",
+      "public/**"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**"
+    ],
+    "mac": {
+      "category": "public.app-category.utilities",
+      "target": "dir",
+      "identity": null
+    }
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
   }
 }

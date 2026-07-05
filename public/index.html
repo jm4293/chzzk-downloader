@@ -10,6 +10,11 @@
     <div class="container">
       <h1>Chzzk VOD Downloader</h1>
 
+      <!-- 툴바 -->
+      <div class="toolbar">
+        <button id="btnOpenFolder" class="btn-folder">📂 다운로드 폴더 열기</button>
+      </div>
+
       <!-- 쿠키 입력 (성인 콘텐츠용) -->
       <details id="cookieDetails" class="cookie-details">
         <summary>로그인 쿠키 입력 (성인 콘텐츠용) <span id="cookieSavedBadge" class="cookie-saved-badge hidden">저장됨</span></summary>
@@ -63,19 +68,8 @@
         <button id="btnDownload">다운로드 시작</button>
       </div>
 
-      <!-- 진행률 바 -->
-      <div id="progressSection" class="progress-section hidden">
-        <div class="progress-label">
-          <span id="progressText">다운로드 중...</span>
-          <span id="progressPercent">0%</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="progressFill"></div>
-        </div>
-      </div>
-
-      <!-- 완료 메시지 -->
-      <div id="doneMsg" class="done hidden"></div>
+      <!-- 다운로드 목록 -->
+      <div id="downloadList" class="download-list"></div>
     </div>
 
     <script src="app.js"></script>

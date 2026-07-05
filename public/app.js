@@ -11,17 +11,14 @@
   const qualitySection = document.getElementById("qualitySection");
   const qualitySelect = document.getElementById("qualitySelect");
   const btnDownload = document.getElementById("btnDownload");
-  const progressSection = document.getElementById("progressSection");
-  const progressFill = document.getElementById("progressFill");
-  const progressPercent = document.getElementById("progressPercent");
-  const doneMsg = document.getElementById("doneMsg");
+  const downloadList = document.getElementById("downloadList");
 
   const cookieDetails = document.getElementById("cookieDetails");
   const cookieNidAut = document.getElementById("cookieNidAut");
   const cookieNidSes = document.getElementById("cookieNidSes");
   const cookieSavedBadge = document.getElementById("cookieSavedBadge");
   const checkAudioOnly = document.getElementById("checkAudioOnly");
-  const progressText = document.getElementById("progressText");
+  const btnOpenFolder = document.getElementById("btnOpenFolder");
 
   // ── localStorage 키 ──
   const LS_KEY = "chzzk_cookies";
@@ -74,8 +71,6 @@
     hideError();
     infoCard.classList.add("hidden");
     qualitySection.classList.add("hidden");
-    progressSection.classList.add("hidden");
-    doneMsg.classList.add("hidden");
   }
 
   /** 초 → M:SS 형식 */
@@ -165,25 +160,51 @@
     }
   });
 
-  // ── 다운로드 시작 ──
+  // ── 다운로드 목록 항목 ──
+  function addDownloadItem(label) {
+    const item = document.createElement("div");
+    item.className = "dl-item";
+    item.innerHTML = `
+      <div class="dl-item-header">
+        <span class="dl-item-title"></span>
+        <span class="dl-item-status">대기 중...</span>
+      </div>
+      <div class="dl-item-bar"><div class="dl-item-fill"></div></div>`;
+    item.querySelector(".dl-item-title").textContent = label;
+    downloadList.prepend(item);
+
+    const statusEl = item.querySelector(".dl-item-status");
+    const fillEl = item.querySelector(".dl-item-fill");
+    return {
+      update(msg) {
+        if (typeof msg.percent === "number") fillEl.style.width = msg.percent + "%";
+        if (msg.status) statusEl.textContent = msg.status;
+        else if (typeof msg.percent === "number")
+          statusEl.textContent = `다운로드 중 ${msg.percent}%`;
+      },
+      done(filename) {
+        fillEl.style.width = "100%";
+        item.classList.add("dl-done");
+        statusEl.textContent = filename ? `완료 · ${filename}` : "완료";
+      },
+      fail(message) {
+        item.classList.add("dl-fail");
+        statusEl.textContent = `실패 · ${message}`;
+      },
+    };
+  }
+
+  // ── 다운로드 시작 (항목별 SSE 구독, 여러 개 동시 가능) ──
   btnDownload.addEventListener("click", async () => {
     const selected = currentQualities[qualitySelect.value];
     if (!selected) return;
 
-    // UI 상태 초기화
-    btnDownload.disabled = true;
-    btnInfo.disabled = true;
-    qualitySection.classList.add("hidden");
-    infoCard.classList.add("hidden");
-    doneMsg.classList.add("hidden");
-    progressFill.style.width = "0%";
-    progressPercent.textContent = "0%";
-    progressText.textContent = "다운로드 중...";
-    progressSection.classList.remove("hidden");
+    const audioOnly = checkAudioOnly.checked;
+    const label = `${currentTitle} · ${selected.resolution}${audioOnly ? " · 오디오만" : ""}`;
 
+    btnDownload.disabled = true;
     try {
-      // 1. 다운로드 시작 요청
-      const body = { title: currentTitle, audioOnly: checkAudioOnly.checked };
+      const body = { title: currentTitle, audioOnly };
       if (selected.hls) {
         body.hls = selected.hls;
       } else {
@@ -195,47 +216,59 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const { downloadId } = await res.json();
-      if (!res.ok) throw new Error("다운로드 시작 실패");
+      const data = await res.json();
+      if (!res.ok || !data.downloadId) {
+        throw new Error(data.error || "다운로드 시작 실패");
+      }
 
-      // 2. SSE로 진행률 구독
-      const es = new EventSource(`/api/download/progress/${downloadId}`);
+      const ui = addDownloadItem(label);
+      let finished = false;
+
+      const es = new EventSource(`/api/download/progress/${data.downloadId}`);
       es.onmessage = (e) => {
         const msg = JSON.parse(e.data);
-
         if (msg.error) {
+          finished = true;
           es.close();
-          showError(msg.error);
-          progressSection.classList.add("hidden");
+          ui.fail(msg.error);
           return;
         }
-
-        progressFill.style.width = msg.percent + "%";
-        progressPercent.textContent = msg.percent + "%";
-        if (msg.status) progressText.textContent = msg.status;
-
+        ui.update(msg);
         if (msg.done) {
+          finished = true;
           es.close();
-          progressSection.classList.add("hidden");
-          doneMsg.textContent = `완료! downloads/${msg.filename || ""}`;
-          doneMsg.classList.remove("hidden");
+          ui.done(msg.filename);
+        }
+      };
+      es.onerror = () => {
+        if (!finished) {
+          finished = true;
+          es.close();
+          ui.fail("연결이 중단되었습니다. 다운로드 폴더를 확인하세요.");
         }
       };
 
-      es.onerror = () => {
-        es.close();
-        // done 메시지가 이미 표시된 경우 무시
-        if (doneMsg.classList.contains("hidden")) {
-          showError("SSE 연결 중단됨. 다운로드 폴더를 확인하세요.");
-          progressSection.classList.add("hidden");
-        }
-      };
+      // 다음 다운로드를 바로 받을 수 있게 입력 초기화
+      urlInput.value = "";
+      hideAll();
+      urlInput.focus();
     } catch (err) {
       showError(err.message);
-      progressSection.classList.add("hidden");
     } finally {
       btnDownload.disabled = false;
-      btnInfo.disabled = false;
+    }
+  });
+
+  // ── 다운로드 폴더 열기 ──
+  btnOpenFolder.addEventListener("click", async () => {
+    try {
+      const res = await fetch("/api/open-folder", { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json();
+        showError(data.error || "폴더를 열 수 없습니다.");
+      }
+    } catch (err) {
+      showError(err.message);
     }
   });
 

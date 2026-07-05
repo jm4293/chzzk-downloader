@@ -2,10 +2,55 @@ const axios = require("axios");
 const path = require("path");
 const fs = require("fs");
 
-const DOWNLOAD_DIR = path.resolve(__dirname, "..", "downloads");
+// Electron 앱에서는 CHZZK_DOWNLOAD_DIR로 저장 위치를 지정 (앱 패키지 내부는 읽기 전용)
+const DOWNLOAD_DIR =
+  process.env.CHZZK_DOWNLOAD_DIR || path.resolve(__dirname, "..", "downloads");
 
 if (!fs.existsSync(DOWNLOAD_DIR)) {
   fs.mkdirSync(DOWNLOAD_DIR, { recursive: true });
+}
+
+// asar 패키지 내부의 ffmpeg 바이너리는 실행 불가 → unpacked 경로로 치환
+function getFfmpegPath() {
+  return require("ffmpeg-static").replace("app.asar", "app.asar.unpacked");
+}
+
+// 진행 중인 다운로드가 사용 중인 출력 경로 (같은 제목 동시 다운로드 충돌 방지)
+const activePaths = new Set();
+
+/**
+ * 기존 파일·진행 중 다운로드와 겹치지 않는 출력 경로를 확보
+ * 겹치면 " (1)", " (2)"... 를 붙인다. 사용이 끝나면 releasePath()로 해제할 것.
+ */
+function reserveOutputPath(baseName, ext) {
+  const safe = sanitizeFilename(baseName) || "download";
+  let candidate = path.join(DOWNLOAD_DIR, `${safe}${ext}`);
+  for (let n = 1; fs.existsSync(candidate) || activePaths.has(candidate); n++) {
+    candidate = path.join(DOWNLOAD_DIR, `${safe} (${n})${ext}`);
+  }
+  activePaths.add(candidate);
+  return candidate;
+}
+
+function releasePath(p) {
+  activePaths.delete(p);
+}
+
+/** 세그먼트 하나를 재시도·타임아웃과 함께 다운로드 */
+async function fetchSegment(url, headers, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      const res = await axios.get(url, {
+        responseType: "arraybuffer",
+        headers,
+        timeout: 30 * 1000,
+      });
+      return Buffer.from(res.data);
+    } catch (err) {
+      if (i >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * i));
+    }
+  }
 }
 
 function sanitizeFilename(name) {
@@ -20,24 +65,29 @@ function sanitizeFilename(name) {
  * @returns {Promise<string>} 저장된 파일 경로
  */
 async function downloadMp4(mp4Url, title, onProgress = () => {}) {
-  const safeTitle = sanitizeFilename(title) || "download";
-  const outputPath = path.join(DOWNLOAD_DIR, `${safeTitle}.mp4`);
+  const outputPath = reserveOutputPath(title, ".mp4");
 
-  const res = await axios.get(mp4Url, {
-    responseType: "stream",
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-      Referer: "https://chzzk.naver.com",
-    },
-    maxRedirects: 10,
-  });
+  let res;
+  try {
+    res = await axios.get(mp4Url, {
+      responseType: "stream",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        Referer: "https://chzzk.naver.com",
+      },
+      maxRedirects: 10,
+    });
+  } catch (err) {
+    releasePath(outputPath);
+    throw err;
+  }
 
   const totalSize = parseInt(res.headers["content-length"], 10) || 0;
   let downloadedSize = 0;
   let lastPercent = 0;
 
-  // 30초 내에 새 데이터가 안 오면 스트림을 종료 (CDN 스로틀링 대응)
+  // 30초 내에 새 데이터가 안 오면 다운로드 실패로 처리 (CDN 스로틀링 대응)
   const IDLE_TIMEOUT_MS = 30 * 1000;
 
   return new Promise((resolve, reject) => {
@@ -51,10 +101,12 @@ async function downloadMp4(mp4Url, title, onProgress = () => {}) {
     function resetIdleTimer() {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        // idle timeout: upstream 종료 후 파이프 체인 종료
-        res.data.unpipe(tracker);
         res.data.destroy();
-        tracker.end();
+        done(
+          new Error(
+            "다운로드가 30초 동안 진행되지 않아 중단했습니다. 다시 시도해주세요."
+          )
+        );
       }, IDLE_TIMEOUT_MS);
     }
 
@@ -62,6 +114,7 @@ async function downloadMp4(mp4Url, title, onProgress = () => {}) {
       if (settled) return;
       settled = true;
       if (idleTimer) clearTimeout(idleTimer);
+      releasePath(outputPath);
       if (err) {
         writer.destroy();
         if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
@@ -107,11 +160,10 @@ async function downloadMp4(mp4Url, title, onProgress = () => {}) {
  * @returns {Promise<string>} 저장된 MP4 경로
  */
 async function downloadHls(hls, title, onProgress = () => {}) {
-  const ffmpegPath = require("ffmpeg-static");
+  const ffmpegPath = getFfmpegPath();
   const { execFile } = require("child_process");
 
-  const safeTitle = sanitizeFilename(title) || "download";
-  const outputPath = path.join(DOWNLOAD_DIR, `${safeTitle}.mp4`);
+  const outputPath = reserveOutputPath(title, ".mp4");
 
   // 라이브 다시보기 m3u8 URL인 경우 ffmpeg로 직접 다운로드
   if (hls.isLiveRewind && hls.baseURL) {
@@ -127,8 +179,13 @@ async function downloadHls(hls, title, onProgress = () => {}) {
         ],
         { maxBuffer: 1024 * 1024 * 50 },
         (err) => {
-          if (err) reject(err);
-          else resolve(outputPath);
+          releasePath(outputPath);
+          if (err) {
+            if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+            reject(err);
+          } else {
+            resolve(outputPath);
+          }
         }
       );
 
@@ -161,7 +218,7 @@ async function downloadHls(hls, title, onProgress = () => {}) {
   }
 
   // 기존 세그먼트 다운로드 방식 (일반 VOD HLS)
-  const tsPath = path.join(DOWNLOAD_DIR, `${safeTitle}.ts`);
+  const tsPath = reserveOutputPath(title, ".ts");
   const { totalSegments, startNumber, baseURL, representationId, mediaTemplate } = hls;
 
   const CONCURRENCY = 8;
@@ -183,51 +240,60 @@ async function downloadHls(hls, title, onProgress = () => {}) {
   let completed = 0;
   let lastPercent = 0;
 
-  for (let batch = 0; batch < totalSegments; batch += CONCURRENCY) {
-    const end = Math.min(batch + CONCURRENCY, totalSegments);
-    const chunks = await Promise.all(
-      Array.from({ length: end - batch }, (_, j) =>
-        axios.get(segUrl(batch + j), { responseType: "arraybuffer", headers })
-          .then((res) => Buffer.from(res.data))
-      )
-    );
+  try {
+    for (let batch = 0; batch < totalSegments; batch += CONCURRENCY) {
+      const end = Math.min(batch + CONCURRENCY, totalSegments);
+      const chunks = await Promise.all(
+        Array.from({ length: end - batch }, (_, j) =>
+          fetchSegment(segUrl(batch + j), headers)
+        )
+      );
 
-    for (const chunk of chunks) {
-      writer.write(chunk);
-      completed++;
-      const percent = Math.round((completed / totalSegments) * 100);
-      if (percent !== lastPercent) {
-        lastPercent = percent;
-        onProgress(percent);
+      for (const chunk of chunks) {
+        writer.write(chunk);
+        completed++;
+        const percent = Math.round((completed / totalSegments) * 100);
+        if (percent !== lastPercent) {
+          lastPercent = percent;
+          onProgress(percent);
+        }
       }
     }
+
+    await new Promise((resolve, reject) => {
+      writer.end(() => resolve());
+      writer.on("error", reject);
+    });
+
+    // TS → MP4 변환 (ffmpeg)
+    await new Promise((resolve, reject) => {
+      execFile(
+        ffmpegPath,
+        [
+          "-i", tsPath,
+          "-c", "copy",
+          "-y",
+          outputPath,
+        ],
+        { maxBuffer: 1024 * 1024 * 10 },
+        (err) => {
+          if (err) reject(err);
+          else resolve();
+        }
+      );
+    });
+
+    return outputPath;
+  } catch (err) {
+    // 실패 시 쓰다 만 출력 파일 정리
+    writer.destroy();
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    throw err;
+  } finally {
+    if (fs.existsSync(tsPath)) fs.unlinkSync(tsPath);
+    releasePath(tsPath);
+    releasePath(outputPath);
   }
-
-  await new Promise((resolve, reject) => {
-    writer.end(() => resolve());
-    writer.on("error", reject);
-  });
-
-  // TS → MP4 변환 (ffmpeg)
-  await new Promise((resolve, reject) => {
-    execFile(
-      ffmpegPath,
-      [
-        "-i", tsPath,
-        "-c", "copy",
-        "-y",
-        outputPath,
-      ],
-      { maxBuffer: 1024 * 1024 * 10 },
-      (err) => {
-        if (fs.existsSync(tsPath)) fs.unlinkSync(tsPath);
-        if (err) reject(err);
-        else resolve();
-      }
-    );
-  });
-
-  return outputPath;
 }
 
 /**
@@ -236,10 +302,10 @@ async function downloadHls(hls, title, onProgress = () => {}) {
  * @returns {Promise<string>} 저장된 M4A 경로
  */
 function extractAudio(mp4Path) {
-  const ffmpegPath = require("ffmpeg-static");
+  const ffmpegPath = getFfmpegPath();
   const { execFile } = require("child_process");
 
-  const m4aPath = mp4Path.replace(/\.mp4$/, ".m4a");
+  const m4aPath = reserveOutputPath(path.basename(mp4Path, ".mp4"), ".m4a");
 
   return new Promise((resolve, reject) => {
     execFile(
@@ -248,12 +314,14 @@ function extractAudio(mp4Path) {
         "-i", mp4Path,
         "-vn",           // 비디오 제거
         "-c:a", "copy",  // 오디오 재인코딩 없이 복사
-        "-y",            // 기존 파일 덮어쓰기
+        "-y",
         m4aPath,
       ],
       { maxBuffer: 1024 * 1024 * 10 },
       (err) => {
+        releasePath(m4aPath);
         if (err) {
+          if (fs.existsSync(m4aPath)) fs.unlinkSync(m4aPath);
           reject(err);
         } else {
           // 소스 MP4는 삭제
